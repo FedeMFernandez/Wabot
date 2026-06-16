@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { MenuService, SchedulerService, WhatsAppService } from '../../application/services';
 import { User } from '../../domain';
-import { db, type DrizzleDB } from '../database';
+import { db, UserRepository, type DrizzleDB } from '../database';
 import {
   createWhatsAppClient,
   type WhatsAppClient,
@@ -32,7 +32,8 @@ export function Context(): AppContext {
 
   const whatsappClient = createWhatsAppClient();
   const whatsappService = new WhatsAppService(whatsappClient);
-  const user = new User(randomUUID());
+  const userRepository = new UserRepository(db);
+  const user = userRepository.loadOrCreate(randomUUID());
   const menuService = new MenuService(whatsappService, user);
   const schedulerService = new SchedulerService(whatsappService, user);
 

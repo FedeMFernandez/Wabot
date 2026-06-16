@@ -83,6 +83,7 @@ export class SchedulerService {
       return;
     }
     scheduled.lastFiredKey = `${this.dayKey(now)} ${scheduled.schedule.time}`;
+    this.user.persistScheduledMessage(scheduled);
   }
 
   private sameMinute(a: Date, b: Date): boolean {

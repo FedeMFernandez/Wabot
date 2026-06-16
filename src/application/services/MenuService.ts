@@ -189,6 +189,7 @@ export class MenuService {
     for (const entry of entries) {
       audience.addRecipient(entry);
     }
+    this.user.persistAudience(audience);
     const added = audience.recipients.length - before;
     return this.reply(
       chatId,
@@ -260,6 +261,7 @@ export class MenuService {
         filename: media.filename ?? undefined,
         caption: caption || undefined,
       });
+      this.user.persistPublication(publication);
       return this.reply(
         chatId,
         `Imagen agregada (${publication.images.length} en total). Mandá otra, texto, o *listo* para terminar.`,
@@ -267,6 +269,7 @@ export class MenuService {
     }
 
     publication.text = message.body;
+    this.user.persistPublication(publication);
     return this.reply(
       chatId,
       `Texto guardado. Mandá imágenes, más texto, o *listo* para terminar.`,
