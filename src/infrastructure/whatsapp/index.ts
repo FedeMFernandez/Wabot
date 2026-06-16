@@ -1,5 +1,6 @@
 import { Client, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
+import { logAlways, logDebug, logError, logWarn } from '../logging';
 
 export type WhatsAppClient = Client;
 
@@ -9,29 +10,39 @@ export function createWhatsAppClient(): WhatsAppClient {
     webVersionCache: {
       type: 'remote',
       remotePath:
-        'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1038602566-alpha.html',
+        'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1041431076-alpha.html',
     },
     puppeteer: {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+      ],
     },
   });
 
   client.on('qr', (qr: string) => {
-    console.log('Escaneá el código QR con WhatsApp:');
+    logAlways('Escaneá el código QR con WhatsApp:');
     qrcode.generate(qr, { small: true });
   });
 
   client.on('authenticated', () => {
-    console.log('Autenticado correctamente.');
+    logDebug('Autenticado correctamente.');
   });
 
   client.on('auth_failure', (msg: string) => {
-    console.error('Fallo de autenticación:', msg);
+    logError('Fallo de autenticación:', msg);
   });
 
   client.on('disconnected', (reason) => {
-    console.warn('Cliente desconectado:', reason);
+    logWarn('Cliente desconectado:', reason);
+  });
+
+  client.on('change_state', (state) => {
+    logDebug('Estado del cliente:', state);
   });
 
   return client;

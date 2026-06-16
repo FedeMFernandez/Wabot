@@ -143,3 +143,6 @@ vite.config.ts.timestamp-*
 .vite/
 .wwebjs_auth/
 .vscode/
+
+# SQLite data
+data/

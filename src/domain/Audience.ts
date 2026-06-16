@@ -1,3 +1,10 @@
+export function normalizeChatId(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.includes('@')) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  return `${digits}@c.us`;
+}
+
 export class Audience {
   readonly id: string;
   name: string;
@@ -10,8 +17,9 @@ export class Audience {
   }
 
   addRecipient(chatId: string): void {
-    if (!this.recipients.includes(chatId)) {
-      this.recipients.push(chatId);
+    const normalized = normalizeChatId(chatId);
+    if (!this.recipients.includes(normalized)) {
+      this.recipients.push(normalized);
     }
   }
 

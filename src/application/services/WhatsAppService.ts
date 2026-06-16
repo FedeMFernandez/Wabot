@@ -5,7 +5,9 @@ import {
   type GroupChat,
   type Message,
 } from 'whatsapp-web.js';
+import { normalizeChatId, type Publication, type PublicationImage } from '../../domain';
 import type { WhatsAppClient } from '../../infrastructure/whatsapp';
+import { logDebug, logError, logWarn } from '../../infrastructure/logging';
 
 export type MessageHandler = (message: Message) => void | Promise<void>;
 
@@ -22,13 +24,16 @@ export class WhatsAppService {
   constructor(private readonly client: WhatsAppClient) {}
 
   start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.registerMessageDetection();
       this.client.once('ready', () => {
-        console.log('Cliente listo. Bot en línea.');
+        logDebug('Cliente listo. Bot en línea.');
         resolve();
       });
-      this.client.initialize();
+      this.client.initialize().catch((err) => {
+        logError('Error al inicializar el cliente:', (err as Error).message);
+        reject(err);
+      });
     });
   }
 
@@ -40,15 +45,54 @@ export class WhatsAppService {
     return MessageMedia.fromFilePath(source);
   }
 
+  buildMediaFromImage(image: PublicationImage): MessageMedia {
+    return new MessageMedia(image.mimetype, image.data, image.filename);
+  }
+
   async sendToChat(
     chatId: string,
     message: string,
     media: MessageMedia | null = null,
   ): Promise<void> {
+    const target = normalizeChatId(chatId);
     const sent = media
-      ? await this.client.sendMessage(chatId, media, { caption: message })
-      : await this.client.sendMessage(chatId, message);
+      ? await this.client.sendMessage(target, media, { caption: message })
+      : await this.client.sendMessage(target, message);
     this.selfSentIds.add(sent.id._serialized);
+  }
+
+  async sendPublicationToChat(chatId: string, publication: Publication): Promise<void> {
+    if (publication.images.length === 0) {
+      await this.sendToChat(chatId, publication.text);
+      return;
+    }
+    for (const image of publication.images) {
+      const media = this.buildMediaFromImage(image);
+      await this.sendToChat(chatId, image.caption ?? '', media);
+    }
+    const hasAnyCaption = publication.images.some((image) => image.caption);
+    if (publication.text && !hasAnyCaption) {
+      await this.sendToChat(chatId, publication.text);
+    }
+  }
+
+  async sendPublicationToRecipients(
+    recipients: string[],
+    publication: Publication,
+  ): Promise<{ ok: number; fail: number }> {
+    let ok = 0;
+    let fail = 0;
+    for (const recipient of recipients) {
+      try {
+        await this.sendPublicationToChat(recipient, publication);
+        ok++;
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logError(`Error enviando a ${recipient}: ${reason}`);
+        fail++;
+      }
+    }
+    return { ok, fail };
   }
 
   async sendToNumber(
@@ -58,7 +102,7 @@ export class WhatsAppService {
   ): Promise<boolean> {
     const numberId = await this.client.getNumberId(number);
     if (!numberId) {
-      console.warn(`El número ${number} no está registrado en WhatsApp.`);
+      logWarn(`El número ${number} no está registrado en WhatsApp.`);
       return false;
     }
     await this.sendToChat(numberId._serialized, message, media);
@@ -103,7 +147,7 @@ export class WhatsAppService {
         return;
       }
       const handlers = message.fromMe ? this.fromMeHandlers : this.incomingHandlers;
-      console.log(`📩 Mensaje de ${message.from}: ${message.body}`);
+      logDebug(`📩 Mensaje de ${message.from}: ${message.body}`);
       await this.dispatch(handlers, message);
     });
   }
@@ -113,7 +157,7 @@ export class WhatsAppService {
       try {
         await handler(message);
       } catch (err) {
-        console.error('Error en handler de mensaje:', (err as Error).message);
+        logError('Error en handler de mensaje:', (err as Error).message);
       }
     }
   }

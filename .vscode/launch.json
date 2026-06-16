@@ -2,26 +2,16 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Wabot (watch)",
+      "name": "Debug Wabot",
       "type": "node",
       "request": "launch",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["--import", "tsx", "--watch"],
+      "runtimeExecutable": "tsx",
       "program": "${workspaceFolder}/src/main.ts",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"]
-    },
-    {
-      "name": "Debug Wabot (sin watch)",
-      "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["--import", "tsx"],
-      "program": "${workspaceFolder}/src/main.ts",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"]
+      "internalConsoleOptions": "neverOpen",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "${workspaceFolder}/node_modules/**"]
     }
   ]
 }
