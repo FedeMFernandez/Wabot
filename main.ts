@@ -61,9 +61,22 @@ function isRecoverableNavigationError(reason: unknown): boolean {
   return message.includes(NAVIGATION_ERROR);
 }
 
+function isSessionCleanupError(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  return (
+    /EBUSY|EPERM|ENOTEMPTY/.test(message) &&
+    (/\.wwebjs_auth/.test(message) || /LocalAuth/.test(message) || /unlink/.test(message))
+  );
+}
+
 process.on('unhandledRejection', (reason) => {
   if (isRecoverableNavigationError(reason)) {
     logDebug('Error de navegación recuperable, ignorado:', reason);
+    return;
+  }
+  if (isSessionCleanupError(reason)) {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    logAlways('Limpieza de sesión no completada por bloqueo del navegador:', message);
     return;
   }
   logError('Rechazo no manejado:', reason);
@@ -72,6 +85,10 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   if (isRecoverableNavigationError(err)) {
     logDebug('Excepción de navegación recuperable, ignorada:', err.message);
+    return;
+  }
+  if (isSessionCleanupError(err)) {
+    logAlways('Limpieza de sesión no completada por bloqueo del navegador:', err.message);
     return;
   }
   logFatal('Excepción no capturada:', err);

@@ -1,3 +1,5 @@
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { Client, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import { logAlways, logDebug, logFatal } from '../logging';
@@ -8,6 +10,33 @@ export * from './qrStore';
 export type WhatsAppClient = Client;
 
 const WHATSAPP_AUTH_PATH = process.env.WHATSAPP_AUTH_PATH ?? './.wwebjs_auth';
+
+const SESSION_CLEANUP_DELAY_MS = 2000;
+const SESSION_CLEANUP_RETRIES = 5;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function cleanupSessionDir(): Promise<void> {
+  const sessionDir = path.join(WHATSAPP_AUTH_PATH, 'session');
+  await delay(SESSION_CLEANUP_DELAY_MS);
+  for (let attempt = 1; attempt <= SESSION_CLEANUP_RETRIES; attempt++) {
+    try {
+      await rm(sessionDir, { recursive: true, force: true });
+      logDebug('Directorio de sesión limpiado correctamente.');
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (attempt === SESSION_CLEANUP_RETRIES) {
+        logAlways('No se pudo limpiar el directorio de sesión tras varios intentos:', message);
+        return;
+      }
+      logDebug(`Reintentando limpieza de sesión (intento ${attempt}):`, message);
+      await delay(SESSION_CLEANUP_DELAY_MS);
+    }
+  }
+}
 
 export function createWhatsAppClient(): WhatsAppClient {
   const client = new Client({
@@ -57,6 +86,7 @@ export function createWhatsAppClient(): WhatsAppClient {
 
   client.on('disconnected', (reason) => {
     logAlways('Cliente desconectado:', reason);
+    void cleanupSessionDir();
   });
 
   client.on('change_state', (state) => {
