@@ -27,4 +27,4 @@ COPY . .
 
 RUN mkdir -p /app/data /app/.wwebjs_auth
 
-CMD ["npx", "tsx", "src/main.ts"]
+CMD ["npx", "tsx", "./main.ts"]

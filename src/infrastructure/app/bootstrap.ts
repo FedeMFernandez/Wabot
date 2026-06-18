@@ -21,7 +21,8 @@ export interface AppContext {
 let context: AppContext | null = null;
 
 function runMigrations(): void {
-  const migrationsFolder = join(__dirname, '../../../migrations');
+  const migrationsFolder =
+    process.env.MIGRATIONS_PATH ?? join(process.cwd(), 'migrations');
   migrate(db, { migrationsFolder });
 }
 
