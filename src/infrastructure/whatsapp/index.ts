@@ -1,6 +1,9 @@
 import { Client, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import { logAlways, logDebug, logFatal } from '../logging';
+import { setCurrentQr } from './qrStore';
+
+export * from './qrStore';
 
 export type WhatsAppClient = Client;
 
@@ -27,6 +30,7 @@ export function createWhatsAppClient(): WhatsAppClient {
   });
 
   client.on('qr', (qr: string) => {
+    setCurrentQr(qr);
     const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
     logAlways('Escaneá el código QR con WhatsApp.');
     logAlways('Abrí este enlace y escaneá la imagen:');
@@ -35,7 +39,12 @@ export function createWhatsAppClient(): WhatsAppClient {
   });
 
   client.on('authenticated', () => {
+    setCurrentQr(null);
     logAlways('Autenticado correctamente.');
+  });
+
+  client.on('ready', () => {
+    setCurrentQr(null);
   });
 
   client.on('auth_failure', (msg: string) => {

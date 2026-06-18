@@ -1,11 +1,54 @@
 import { createServer } from 'node:http';
-import { Context, logAlways, logDebug, logError, logFatal } from './src/infrastructure';
+import { Context, getCurrentQr, logAlways, logDebug, logError, logFatal } from './src/infrastructure';
 
 const NAVIGATION_ERROR = 'Execution context was destroyed';
 
+function renderQrPage(qr: string | null): string {
+  if (!qr) {
+    return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="10" />
+<title>Wabot QR</title>
+</head>
+<body style="font-family: sans-serif; text-align: center; padding: 2rem;">
+<h1>Wabot</h1>
+<p>Ya autenticado o esperando QR...</p>
+</body>
+</html>`;
+  }
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(qr)}`;
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="10" />
+<title>Wabot QR</title>
+</head>
+<body style="font-family: sans-serif; text-align: center; padding: 2rem;">
+<h1>Escaneá el código QR con WhatsApp</h1>
+<p>Abrí WhatsApp en tu teléfono y escaneá esta imagen.</p>
+<img src="${qrImageUrl}" alt="WhatsApp QR" width="350" height="350" />
+</body>
+</html>`;
+}
+
 function startHealthServer(): void {
   const port = Number(process.env.PORT) || 3000;
-  createServer((_req, res) => {
+  createServer((req, res) => {
+    if (req.url === '/qr') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderQrPage(getCurrentQr()));
+      return;
+    }
+    if (req.url === '/qr.txt') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(getCurrentQr() ?? '');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Wabot is running');
   }).listen(port, () => {
