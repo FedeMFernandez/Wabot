@@ -6,6 +6,7 @@ import {
   Schedule,
   ScheduledMessage,
   User,
+  validateRecipients,
 } from '../../domain';
 import type { WhatsAppService } from './WhatsAppService';
 
@@ -178,23 +179,31 @@ export class MenuService {
       return this.reply(chatId, `Tus grupos:\n${lista}`);
     }
 
-    const entries = body
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    if (entries.length === 0) {
+    const { valid, errors } = validateRecipients(body);
+    if (valid.length === 0 && errors.length === 0) {
       return this.reply(chatId, 'No detecté destinatarios. Mandá IDs separados por coma.');
     }
+
     const before = audience.recipients.length;
-    for (const entry of entries) {
+    for (const entry of valid) {
       audience.addRecipient(entry);
     }
     this.user.persistAudience(audience);
     const added = audience.recipients.length - before;
-    return this.reply(
-      chatId,
-      `Agregados ${added} destinatario(s). Total: ${audience.recipients.length}. Otro(s) ID(s), *grupos* o *listo*.`,
-    );
+
+    const lines: string[] = [];
+    if (added > 0) {
+      lines.push(`Agregados ${added} destinatario(s). Total: ${audience.recipients.length}.`);
+    }
+    if (errors.length > 0) {
+      const detail = errors
+        .map((error) => `• ${error.input} → ${error.reason}`)
+        .join('\n');
+      lines.push(`⚠️ No agregué estos números porque tienen errores:\n${detail}`);
+    }
+    lines.push('Otro(s) ID(s), *grupos* o *listo*.');
+
+    return this.reply(chatId, lines.join('\n\n'));
   }
 
   private async handlePublications(chatId: string, body: string): Promise<void> {
