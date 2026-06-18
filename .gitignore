@@ -141,8 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
-.wwebjs_auth/
-.vscode/
 
 # SQLite data
 data/
+
+#mine
+.wwebjs_auth/
+.vscode/
