@@ -17,6 +17,9 @@ RUN apk add --no-cache \
     make \
     g++
 
+RUN if [ -x /usr/bin/chromium ] && [ ! -e /usr/bin/chromium-browser ]; then ln -sf /usr/bin/chromium /usr/bin/chromium-browser; fi \
+    && if [ -x /usr/bin/chromium-browser ] && [ ! -e /usr/bin/chromium ]; then ln -sf /usr/bin/chromium-browser /usr/bin/chromium; fi
+
 WORKDIR /app
 
 COPY package*.json ./

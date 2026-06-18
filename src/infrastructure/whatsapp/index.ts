@@ -1,6 +1,6 @@
 import { Client, LocalAuth } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
-import { logAlways, logDebug, logError, logWarn } from '../logging';
+import { logAlways, logDebug, logFatal } from '../logging';
 
 export type WhatsAppClient = Client;
 
@@ -35,19 +35,23 @@ export function createWhatsAppClient(): WhatsAppClient {
   });
 
   client.on('authenticated', () => {
-    logDebug('Autenticado correctamente.');
+    logAlways('Autenticado correctamente.');
   });
 
   client.on('auth_failure', (msg: string) => {
-    logError('Fallo de autenticación:', msg);
+    logFatal('Fallo de autenticación:', msg);
+  });
+
+  client.on('loading_screen', (percent, message) => {
+    logAlways('Cargando WhatsApp:', percent, message);
   });
 
   client.on('disconnected', (reason) => {
-    logWarn('Cliente desconectado:', reason);
+    logAlways('Cliente desconectado:', reason);
   });
 
   client.on('change_state', (state) => {
-    logDebug('Estado del cliente:', state);
+    logAlways('Estado del cliente:', state);
   });
 
   return client;

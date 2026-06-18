@@ -7,7 +7,7 @@ import {
 } from 'whatsapp-web.js';
 import { normalizeChatId, type Publication, type PublicationImage } from '../../domain';
 import type { WhatsAppClient } from '../../infrastructure/whatsapp';
-import { logDebug, logError, logWarn } from '../../infrastructure/logging';
+import { logAlways, logDebug, logError, logFatal, logWarn } from '../../infrastructure/logging';
 
 export type MessageHandler = (message: Message) => void | Promise<void>;
 
@@ -27,11 +27,14 @@ export class WhatsAppService {
     return new Promise((resolve, reject) => {
       this.registerMessageDetection();
       this.client.once('ready', () => {
-        logDebug('Cliente listo. Bot en línea.');
+        logAlways('Cliente listo. Bot en línea.');
         resolve();
       });
+      logAlways('Inicializando cliente de WhatsApp...');
       this.client.initialize().catch((err) => {
-        logError('Error al inicializar el cliente:', (err as Error).message);
+        const error = err as Error;
+        logFatal('Error al inicializar el cliente:', error.message);
+        logFatal(error.stack ?? error);
         reject(err);
       });
     });
