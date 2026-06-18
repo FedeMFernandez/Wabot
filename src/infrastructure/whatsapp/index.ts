@@ -4,9 +4,11 @@ import { logAlways, logDebug, logError, logWarn } from '../logging';
 
 export type WhatsAppClient = Client;
 
+const WHATSAPP_AUTH_PATH = process.env.WHATSAPP_AUTH_PATH ?? './.wwebjs_auth';
+
 export function createWhatsAppClient(): WhatsAppClient {
   const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ dataPath: WHATSAPP_AUTH_PATH }),
     webVersionCache: {
       type: 'remote',
       remotePath:
@@ -25,7 +27,10 @@ export function createWhatsAppClient(): WhatsAppClient {
   });
 
   client.on('qr', (qr: string) => {
-    logAlways('Escaneá el código QR con WhatsApp:');
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+    logAlways('Escaneá el código QR con WhatsApp.');
+    logAlways('Abrí este enlace y escaneá la imagen:');
+    logAlways(qrImageUrl);
     qrcode.generate(qr, { small: true });
   });
 

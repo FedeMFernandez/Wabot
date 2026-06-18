@@ -9,14 +9,13 @@ services:
         required: false
     environment:
       - DATABASE_PATH=/app/data/wabot.db
+      - WHATSAPP_AUTH_PATH=/app/data/.wwebjs_auth
       - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
     volumes:
-      - wabot_auth:/app/.wwebjs_auth
       - wabot_data:/app/data
     restart: unless-stopped
     stdin_open: true
     tty: true
 
 volumes:
-  wabot_auth:
   wabot_data:

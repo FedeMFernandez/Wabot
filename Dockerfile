@@ -25,6 +25,6 @@ RUN npm ci
 
 COPY . .
 
-RUN mkdir -p /app/data /app/.wwebjs_auth
+RUN mkdir -p /app/data
 
 CMD ["npx", "tsx", "./main.ts"]
