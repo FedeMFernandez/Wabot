@@ -1,6 +1,17 @@
-import { Context, logDebug, logError, logFatal } from './infrastructure';
+import { createServer } from 'node:http';
+import { Context, logAlways, logDebug, logError, logFatal } from './src/infrastructure';
 
 const NAVIGATION_ERROR = 'Execution context was destroyed';
+
+function startHealthServer(): void {
+  const port = Number(process.env.PORT) || 3000;
+  createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Wabot is running');
+  }).listen(port, () => {
+    logAlways(`Servidor HTTP escuchando en el puerto ${port}.`);
+  });
+}
 
 function isRecoverableNavigationError(reason: unknown): boolean {
   const message = reason instanceof Error ? reason.message : String(reason);
@@ -25,6 +36,8 @@ process.on('uncaughtException', (err) => {
 });
 
 async function main(): Promise<void> {
+  startHealthServer();
+
   const { whatsappService, menuService, schedulerService } = Context();
 
   whatsappService.onMessage(async (message) => {
