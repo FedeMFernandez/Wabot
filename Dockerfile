@@ -28,6 +28,8 @@ RUN npm ci
 
 COPY . .
 
+RUN npm run build
+
 RUN mkdir -p /app/data
 
-CMD ["npx", "tsx", "./main.ts"]
+CMD ["node", "dist/main.js"]

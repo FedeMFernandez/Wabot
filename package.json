@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsx --env-file-if-exists=.env main.ts",
     "dev": "tsx watch --env-file-if-exists=.env main.ts",
-    "build": "tsc ./main.ts --outDir dist",
+    "build": "tsc",
     "serve": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
