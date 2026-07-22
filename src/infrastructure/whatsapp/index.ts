@@ -1,11 +1,13 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Client, LocalAuth } from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
 import { logAlways, logDebug, logFatal } from '../logging';
 import { setCurrentQr } from './qrStore';
+import { delay } from './timing';
 
 export * from './qrStore';
+export * from './timing';
+export * from './broadcastConfig';
 
 export type WhatsAppClient = Client;
 
@@ -13,10 +15,6 @@ const WHATSAPP_AUTH_PATH = process.env.WHATSAPP_AUTH_PATH ?? './.wwebjs_auth';
 
 const SESSION_CLEANUP_DELAY_MS = 2000;
 const SESSION_CLEANUP_RETRIES = 5;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function cleanupSessionDir(): Promise<void> {
   const sessionDir = path.join(WHATSAPP_AUTH_PATH, 'session');
@@ -69,11 +67,6 @@ export function createWhatsAppClient(): WhatsAppClient {
 
   client.on('qr', (qr: string) => {
     setCurrentQr(qr);
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-    logAlways('Escaneá el código QR con WhatsApp.');
-    logAlways('Abrí este enlace y escaneá la imagen:');
-    logAlways(qrImageUrl);
-    qrcode.generate(qr, { small: true });
   });
 
   client.on('authenticated', () => {

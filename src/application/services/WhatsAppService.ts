@@ -5,8 +5,20 @@ import {
   type GroupChat,
   type Message,
 } from 'whatsapp-web.js';
-import { normalizeChatId, type Publication, type PublicationImage } from '../../domain';
-import type { WhatsAppClient } from '../../infrastructure/whatsapp';
+import {
+  expandSpintax,
+  isGroupChatId,
+  normalizeChatId,
+  type Publication,
+  type PublicationImage,
+} from '../../domain';
+import {
+  delay,
+  loadBroadcastConfig,
+  randomBetween,
+  type BroadcastConfig,
+  type WhatsAppClient,
+} from '../../infrastructure/whatsapp';
 import { logAlways, logDebug, logError, logFatal, logWarn } from '../../infrastructure/logging';
 
 export type MessageHandler = (message: Message) => void | Promise<void>;
@@ -20,6 +32,7 @@ export class WhatsAppService {
   private readonly fromMeHandlers: MessageHandler[] = [];
   private readonly incomingHandlers: MessageHandler[] = [];
   private readonly selfSentIds = new Set<string>();
+  private readonly broadcastConfig: BroadcastConfig = loadBroadcastConfig();
 
   constructor(private readonly client: WhatsAppClient) {}
 
@@ -66,16 +79,16 @@ export class WhatsAppService {
 
   async sendPublicationToChat(chatId: string, publication: Publication): Promise<void> {
     if (publication.images.length === 0) {
-      await this.sendToChat(chatId, publication.text);
+      await this.sendToChat(chatId, expandSpintax(publication.text));
       return;
     }
     for (const image of publication.images) {
       const media = this.buildMediaFromImage(image);
-      await this.sendToChat(chatId, image.caption ?? '', media);
+      await this.sendToChat(chatId, expandSpintax(image.caption ?? ''), media);
     }
     const hasAnyCaption = publication.images.some((image) => image.caption);
     if (publication.text && !hasAnyCaption) {
-      await this.sendToChat(chatId, publication.text);
+      await this.sendToChat(chatId, expandSpintax(publication.text));
     }
   }
 
@@ -85,8 +98,10 @@ export class WhatsAppService {
   ): Promise<{ ok: number; fail: number }> {
     let ok = 0;
     let fail = 0;
-    for (const recipient of recipients) {
+    for (let index = 0; index < recipients.length; index++) {
+      const recipient = recipients[index];
       try {
+        await this.simulateHumanPresence(recipient);
         await this.sendPublicationToChat(recipient, publication);
         ok++;
       } catch (err) {
@@ -94,8 +109,44 @@ export class WhatsAppService {
         logError(`Error enviando a ${recipient}: ${reason}`);
         fail++;
       }
+      const isLast = index === recipients.length - 1;
+      if (isLast) break;
+      await this.pauseBetweenRecipients(recipient, index + 1);
     }
     return { ok, fail };
+  }
+
+  private async pauseBetweenRecipients(recipient: string, sentCount: number): Promise<void> {
+    const config = this.broadcastConfig;
+    if (config.batchSize > 0 && sentCount % config.batchSize === 0) {
+      const pause = randomBetween(config.batchPauseMs, Math.round(config.batchPauseMs * 1.2));
+      logDebug(`Pausa de lote tras ${sentCount} envíos: ${pause} ms.`);
+      await delay(pause);
+      return;
+    }
+    await delay(this.recipientDelay(recipient));
+  }
+
+  private recipientDelay(recipient: string): number {
+    const config = this.broadcastConfig;
+    if (isGroupChatId(recipient)) {
+      return randomBetween(config.groupMinDelayMs, config.groupMaxDelayMs);
+    }
+    return randomBetween(config.minDelayMs, config.maxDelayMs);
+  }
+
+  private async simulateHumanPresence(chatId: string): Promise<void> {
+    const config = this.broadcastConfig;
+    if (!config.simulateTyping) return;
+    try {
+      const chat = await this.client.getChatById(normalizeChatId(chatId));
+      await chat.sendSeen();
+      await chat.sendStateTyping();
+      await delay(randomBetween(config.typingMinMs, config.typingMaxMs));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logDebug(`No se pudo simular presencia en ${chatId}: ${reason}`);
+    }
   }
 
   async sendToNumber(

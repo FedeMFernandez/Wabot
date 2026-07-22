@@ -5,6 +5,10 @@ export function normalizeChatId(value: string): string {
   return `${digits}@c.us`;
 }
 
+export function isGroupChatId(value: string): boolean {
+  return normalizeChatId(value).endsWith('@g.us');
+}
+
 export class Audience {
   readonly id: string;
   name: string;
@@ -14,6 +18,10 @@ export class Audience {
     this.id = id;
     this.name = name;
     this.recipients = recipients;
+  }
+
+  rename(newName: string): void {
+    this.name = newName.trim();
   }
 
   addRecipient(chatId: string): void {

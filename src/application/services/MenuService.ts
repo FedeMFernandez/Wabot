@@ -6,9 +6,13 @@ import {
   Schedule,
   ScheduledMessage,
   User,
+  extractContactsFromVCards,
+  validatePhoneNumber,
   validateRecipients,
 } from '../../domain';
 import type { WhatsAppService } from './WhatsAppService';
+
+const VCARD_TYPES = ['vcard', 'multi_vcard'];
 
 const WEEKDAY_NAMES = [
   'domingo',
@@ -26,11 +30,20 @@ type ScheduleDraft = {
   schedule?: Schedule;
 };
 
+type ScheduleDateInput =
+  | { source: 'today' }
+  | { source: 'explicit'; day: number; month: number; year: number | null };
+
 type MenuState =
   | { step: 'main' }
   | { step: 'audiences' }
   | { step: 'audienceName' }
-  | { step: 'audienceRecipients'; audienceId: string }
+  | { step: 'audienceRecipients'; audienceId: string; mode: 'create' | 'edit' }
+  | { step: 'audienceEdit' }
+  | { step: 'audienceEditMenu'; audienceId: string }
+  | { step: 'audienceRename'; audienceId: string }
+  | { step: 'audienceDelete'; audienceId: string }
+  | { step: 'audienceRemoveRecipients'; audienceId: string; mode: 'create' | 'edit' }
   | { step: 'publications' }
   | { step: 'publicationName' }
   | { step: 'publicationContent'; publicationId: string }
@@ -39,9 +52,10 @@ type MenuState =
   | { step: 'scheduled' }
   | { step: 'scheduleAudience' }
   | { step: 'schedulePublication'; audienceId: string }
-  | { step: 'scheduleKind'; draft: ScheduleDraft }
-  | { step: 'scheduleWeekdays'; draft: ScheduleDraft; weekdays: number[] }
-  | { step: 'scheduleTime'; draft: ScheduleDraft; mode: 'once' | 'weekly'; weekdays: number[] }
+  | { step: 'scheduleWhen'; draft: ScheduleDraft }
+  | { step: 'scheduleDate'; draft: ScheduleDraft }
+  | { step: 'scheduleTime'; draft: ScheduleDraft; dateInput: ScheduleDateInput }
+  | { step: 'scheduleRepeat'; draft: ScheduleDraft; date: Date; dateInput: ScheduleDateInput }
   | { step: 'scheduleConfirm'; draft: ScheduleDraft }
   | { step: 'scheduleRemove' };
 
@@ -74,7 +88,17 @@ export class MenuService {
       case 'audienceName':
         return this.handleAudienceName(chatId, body);
       case 'audienceRecipients':
-        return this.handleAudienceRecipients(chatId, body, state.audienceId);
+        return this.handleAudienceRecipients(chatId, message, state.audienceId, state.mode);
+      case 'audienceEdit':
+        return this.handleAudienceEdit(chatId, body);
+      case 'audienceEditMenu':
+        return this.handleAudienceEditMenu(chatId, body, state.audienceId);
+      case 'audienceRename':
+        return this.handleAudienceRename(chatId, body, state.audienceId);
+      case 'audienceDelete':
+        return this.handleAudienceDelete(chatId, body, state.audienceId);
+      case 'audienceRemoveRecipients':
+        return this.handleAudienceRemoveRecipients(chatId, body, state.audienceId, state.mode);
       case 'publications':
         return this.handlePublications(chatId, body);
       case 'publicationName':
@@ -91,12 +115,14 @@ export class MenuService {
         return this.handleScheduleAudience(chatId, body);
       case 'schedulePublication':
         return this.handleSchedulePublication(chatId, body, state.audienceId);
-      case 'scheduleKind':
-        return this.handleScheduleKind(chatId, body, state.draft);
-      case 'scheduleWeekdays':
-        return this.handleScheduleWeekdays(chatId, body, state.draft, state.weekdays);
+      case 'scheduleWhen':
+        return this.handleScheduleWhen(chatId, body, state.draft);
+      case 'scheduleDate':
+        return this.handleScheduleDate(chatId, body, state.draft);
       case 'scheduleTime':
-        return this.handleScheduleTime(chatId, body, state.draft, state.mode, state.weekdays);
+        return this.handleScheduleTime(chatId, body, state.draft, state.dateInput);
+      case 'scheduleRepeat':
+        return this.handleScheduleRepeat(chatId, body, state.draft, state.date, state.dateInput);
       case 'scheduleConfirm':
         return this.handleScheduleConfirm(chatId, body, state.draft);
       case 'scheduleRemove':
@@ -132,6 +158,8 @@ export class MenuService {
         return this.reply(chatId, 'Nombre del grupo de remitentes:');
       case '2':
         return this.reply(chatId, this.listAudiences());
+      case '3':
+        return this.startAudienceEdit(chatId);
       case '0':
         this.states.set(chatId, { step: 'main' });
         return this.reply(chatId, this.mainMenu());
@@ -143,15 +171,44 @@ export class MenuService {
   private async handleAudienceName(chatId: string, body: string): Promise<void> {
     const audience = new Audience(randomUUID(), body);
     this.user.addAudience(audience);
-    this.states.set(chatId, { step: 'audienceRecipients', audienceId: audience.id });
+    this.states.set(chatId, { step: 'audienceRecipients', audienceId: audience.id, mode: 'create' });
     return this.reply(
       chatId,
       `Grupo de remitentes *${body}* creado.\n\nMandame los IDs de destinatarios (podés mandar varios separados por coma).\n` +
+        '📇 También podés compartirme contactos de WhatsApp (uno o varios) y saco los números solo.\n' +
         'Escribí *grupos* para ver tus grupos, o *listo* para terminar.',
     );
   }
 
-  private async handleAudienceRecipients(
+  private async startAudienceEdit(chatId: string): Promise<void> {
+    if (this.user.listAudiences().length === 0) {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(
+        chatId,
+        `No hay grupos de remitentes. Creá uno primero.\n\n${this.audiencesMenu()}`,
+      );
+    }
+    this.states.set(chatId, { step: 'audienceEdit' });
+    return this.reply(
+      chatId,
+      `Elegí el grupo de remitentes a editar:\n${this.numberedAudiences()}\n0. Volver`,
+    );
+  }
+
+  private async handleAudienceEdit(chatId: string, body: string): Promise<void> {
+    if (body === '0') {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(chatId, this.audiencesMenu());
+    }
+    const audience = this.user.listAudiences()[Number(body) - 1];
+    if (!audience) {
+      return this.reply(chatId, `Opción inválida.\n${this.numberedAudiences()}\n0. Volver`);
+    }
+    this.states.set(chatId, { step: 'audienceEditMenu', audienceId: audience.id });
+    return this.reply(chatId, this.audienceEditMenu(audience));
+  }
+
+  private async handleAudienceEditMenu(
     chatId: string,
     body: string,
     audienceId: string,
@@ -161,13 +218,104 @@ export class MenuService {
       this.states.set(chatId, { step: 'audiences' });
       return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
     }
+    switch (body) {
+      case '1':
+        this.states.set(chatId, { step: 'audienceRecipients', audienceId, mode: 'edit' });
+        return this.reply(
+          chatId,
+          `Editando *${audience.name}* (${audience.recipients.length} destinatario/s).\n\n` +
+            'Mandame IDs para agregar (varios separados por coma).\n' +
+            '📇 También podés compartirme contactos de WhatsApp (uno o varios) y saco los números solo.\n' +
+            'Escribí *borrar* para quitar destinatarios, *grupos* para ver tus grupos, o *listo* para terminar.',
+        );
+      case '2':
+        this.states.set(chatId, { step: 'audienceRename', audienceId });
+        return this.reply(chatId, 'Nuevo nombre para el grupo:');
+      case '3':
+        this.states.set(chatId, { step: 'audienceDelete', audienceId });
+        return this.reply(
+          chatId,
+          `¿Seguro que querés eliminar *${audience.name}* y sus ${audience.recipients.length} destinatario(s)? Escribí *si* para confirmar o *no* para cancelar.`,
+        );
+      case '0':
+        this.states.set(chatId, { step: 'audiences' });
+        return this.reply(chatId, this.audiencesMenu());
+      default:
+        return this.reply(chatId, `Opción inválida.\n\n${this.audienceEditMenu(audience)}`);
+    }
+  }
 
-    const command = body.toLowerCase();
-    if (command === 'listo') {
+  private async handleAudienceRename(
+    chatId: string,
+    body: string,
+    audienceId: string,
+  ): Promise<void> {
+    const audience = this.user.getAudience(audienceId);
+    if (!audience) {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
+    }
+    const newName = body.trim();
+    if (newName.length === 0) {
+      return this.reply(chatId, 'Nombre inválido. Nuevo nombre para el grupo:');
+    }
+    audience.rename(newName);
+    this.user.persistAudience(audience);
+    this.states.set(chatId, { step: 'audiences' });
+    return this.reply(
+      chatId,
+      `Grupo de remitentes renombrado a *${audience.name}*.\n\n${this.audiencesMenu()}`,
+    );
+  }
+
+  private async handleAudienceDelete(
+    chatId: string,
+    body: string,
+    audienceId: string,
+  ): Promise<void> {
+    const audience = this.user.getAudience(audienceId);
+    if (!audience) {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
+    }
+    const command = body.trim().toLowerCase();
+    if (command === 'si' || command === 'sí') {
+      const name = audience.name;
+      this.user.removeAudience(audienceId);
       this.states.set(chatId, { step: 'audiences' });
       return this.reply(
         chatId,
-        `Grupo de remitentes *${audience.name}* guardado con ${audience.recipients.length} destinatario(s).\n\n${this.audiencesMenu()}`,
+        `Grupo de remitentes *${name}* eliminado.\n\n${this.audiencesMenu()}`,
+      );
+    }
+    this.states.set(chatId, { step: 'audiences' });
+    return this.reply(chatId, `Cancelado.\n\n${this.audiencesMenu()}`);
+  }
+
+  private async handleAudienceRecipients(
+    chatId: string,
+    message: Message,
+    audienceId: string,
+    mode: 'create' | 'edit',
+  ): Promise<void> {
+    const audience = this.user.getAudience(audienceId);
+    if (!audience) {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
+    }
+
+    if (VCARD_TYPES.includes(message.type)) {
+      return this.addRecipientsFromVCards(chatId, audience, message.vCards ?? []);
+    }
+
+    const body = message.body.trim();
+    const command = body.toLowerCase();
+    if (command === 'listo') {
+      this.states.set(chatId, { step: 'audiences' });
+      const verb = mode === 'edit' ? 'actualizado' : 'guardado';
+      return this.reply(
+        chatId,
+        `Grupo de remitentes *${audience.name}* ${verb} con ${audience.recipients.length} destinatario(s).\n\n${this.audiencesMenu()}`,
       );
     }
     if (command === 'grupos') {
@@ -177,6 +325,33 @@ export class MenuService {
         .map((g) => `• ${g.name}\n  ${g.id._serialized}`)
         .join('\n');
       return this.reply(chatId, `Tus grupos:\n${lista}`);
+    }
+    if (command === 'borrar' || command.startsWith('borrar ')) {
+      if (audience.recipients.length === 0) {
+        return this.reply(chatId, 'El grupo no tiene destinatarios para borrar.');
+      }
+      const rest = body.slice('borrar'.length).trim();
+      if (rest.length > 0) {
+        const removed = this.removeRecipientsByNumbers(audience, rest);
+        if (removed.length === 0) {
+          return this.reply(
+            chatId,
+            `No reconocí números válidos.\n${this.numberedRecipients(audience)}`,
+          );
+        }
+        this.user.persistAudience(audience);
+        return this.reply(
+          chatId,
+          `Quité ${removed.length} destinatario(s). Total: ${audience.recipients.length}.\nMandá IDs, *borrar* o *listo*.`,
+        );
+      }
+      this.states.set(chatId, { step: 'audienceRemoveRecipients', audienceId, mode });
+      return this.reply(
+        chatId,
+        `Destinatarios actuales:\n${this.numberedRecipients(audience)}\n\n` +
+          'Mandá los números a borrar (separados por coma, ej: 1,3).\n' +
+          'Escribí *listo* para volver a agregar.',
+      );
     }
 
     const { valid, errors } = validateRecipients(body);
@@ -201,9 +376,117 @@ export class MenuService {
         .join('\n');
       lines.push(`⚠️ No agregué estos números porque tienen errores:\n${detail}`);
     }
-    lines.push('Otro(s) ID(s), *grupos* o *listo*.');
+    lines.push('Otro(s) ID(s), *borrar*, *grupos* o *listo*.');
 
     return this.reply(chatId, lines.join('\n\n'));
+  }
+
+  private async addRecipientsFromVCards(
+    chatId: string,
+    audience: Audience,
+    vcards: string[],
+  ): Promise<void> {
+    const contacts = extractContactsFromVCards(vcards);
+    if (contacts.length === 0) {
+      return this.reply(
+        chatId,
+        'No pude leer ningún número en el/los contacto(s) que compartiste. Probá mandando los IDs separados por coma.',
+      );
+    }
+
+    const added: string[] = [];
+    const duplicated: string[] = [];
+    const invalid: string[] = [];
+
+    for (const contact of contacts) {
+      const label = contact.name.length > 0 ? `${contact.name} (${contact.number})` : contact.number;
+      const reason = validatePhoneNumber(contact.number);
+      if (reason) {
+        invalid.push(`• ${label} → ${reason}`);
+        continue;
+      }
+      const before = audience.recipients.length;
+      audience.addRecipient(contact.number);
+      if (audience.recipients.length > before) {
+        added.push(`• ${label}`);
+      } else {
+        duplicated.push(`• ${label}`);
+      }
+    }
+
+    if (added.length > 0) {
+      this.user.persistAudience(audience);
+    }
+
+    const lines: string[] = [];
+    if (added.length > 0) {
+      lines.push(
+        `✅ Agregué ${added.length} destinatario(s). Total: ${audience.recipients.length}.\n${added.join('\n')}`,
+      );
+    }
+    if (duplicated.length > 0) {
+      lines.push(`ℹ️ Ya estaban en el grupo:\n${duplicated.join('\n')}`);
+    }
+    if (invalid.length > 0) {
+      lines.push(`⚠️ No agregué estos contactos porque tienen errores:\n${invalid.join('\n')}`);
+    }
+    lines.push('Compartí más contactos, mandá otro(s) ID(s), *borrar*, *grupos* o *listo*.');
+
+    return this.reply(chatId, lines.join('\n\n'));
+  }
+
+  private async handleAudienceRemoveRecipients(
+    chatId: string,
+    body: string,
+    audienceId: string,
+    mode: 'create' | 'edit',
+  ): Promise<void> {
+    const audience = this.user.getAudience(audienceId);
+    if (!audience) {
+      this.states.set(chatId, { step: 'audiences' });
+      return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
+    }
+
+    const command = body.toLowerCase();
+    if (command === 'listo' || command === '0') {
+      this.states.set(chatId, { step: 'audienceRecipients', audienceId, mode });
+      return this.reply(
+        chatId,
+        `Destinatarios: ${audience.recipients.length}. Mandá IDs para agregar, *borrar* para quitar más, o *listo* para terminar.`,
+      );
+    }
+
+    const removed = this.removeRecipientsByNumbers(audience, body);
+    if (removed.length === 0) {
+      return this.reply(
+        chatId,
+        `No reconocí números válidos.\n${this.numberedRecipients(audience)}\n\nMandá algo como 1,3 o *listo*.`,
+      );
+    }
+    this.user.persistAudience(audience);
+    if (audience.recipients.length === 0) {
+      this.states.set(chatId, { step: 'audienceRecipients', audienceId, mode });
+      return this.reply(
+        chatId,
+        `Quité ${removed.length} destinatario(s). El grupo quedó vacío.\nMandá IDs para agregar o *listo* para terminar.`,
+      );
+    }
+    return this.reply(
+      chatId,
+      `Quité ${removed.length} destinatario(s).\n\nDestinatarios actuales:\n${this.numberedRecipients(audience)}\n\nMandá más números a borrar o *listo* para volver a agregar.`,
+    );
+  }
+
+  private removeRecipientsByNumbers(audience: Audience, body: string): string[] {
+    const indexes = body
+      .split(',')
+      .map((entry) => Number(entry.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= audience.recipients.length);
+    const targets = [...new Set(indexes)].map((n) => audience.recipients[n - 1]);
+    for (const target of targets) {
+      audience.removeRecipient(target);
+    }
+    return targets;
   }
 
   private async handlePublications(chatId: string, body: string): Promise<void> {
@@ -385,14 +668,14 @@ export class MenuService {
       return this.reply(chatId, `Opción inválida.\n${this.numberedPublications()}`);
     }
     const draft: ScheduleDraft = { audienceId, publicationId: publication.id };
-    this.states.set(chatId, { step: 'scheduleKind', draft });
+    this.states.set(chatId, { step: 'scheduleWhen', draft });
     return this.reply(
       chatId,
-      '¿Cuándo querés enviarlo?\n1. Hoy (una vez)\n2. Días de la semana (cada semana)\n0. Cancelar',
+      '¿Cuándo querés enviarlo?\n1. Hoy\n2. Elegir fecha y hora\n0. Cancelar',
     );
   }
 
-  private async handleScheduleKind(
+  private async handleScheduleWhen(
     chatId: string,
     body: string,
     draft: ScheduleDraft,
@@ -402,89 +685,111 @@ export class MenuService {
         this.states.set(chatId, {
           step: 'scheduleTime',
           draft,
-          mode: 'once',
-          weekdays: [],
+          dateInput: { source: 'today' },
         });
         return this.reply(chatId, 'Ingresá la hora de hoy (HH:MM), por ejemplo 18:30:');
       case '2':
-        this.states.set(chatId, { step: 'scheduleWeekdays', draft, weekdays: [] });
+        this.states.set(chatId, { step: 'scheduleDate', draft });
         return this.reply(
           chatId,
-          'Mandame los días separados por coma (número 0-6 o nombre).\n' +
-            '0=domingo, 1=lunes, 2=martes, 3=miércoles, 4=jueves, 5=viernes, 6=sábado.\n' +
-            'Escribí *listo* para terminar.',
+          'Ingresá la fecha (DD/MM o DD/MM/AAAA), por ejemplo 25/12 o 25/12/2026:',
         );
       case '0':
         return this.cancelSchedule(chatId);
       default:
-        return this.reply(chatId, 'Opción inválida. 1=Hoy, 2=Días de la semana, 0=Cancelar.');
+        return this.reply(chatId, 'Opción inválida. 1=Hoy, 2=Elegir fecha y hora, 0=Cancelar.');
     }
   }
 
-  private async handleScheduleWeekdays(
+  private async handleScheduleDate(
     chatId: string,
     body: string,
     draft: ScheduleDraft,
-    weekdays: number[],
   ): Promise<void> {
-    const command = body.toLowerCase();
-    if (command === 'listo') {
-      if (weekdays.length === 0) {
-        return this.reply(chatId, 'No elegiste ningún día. Mandá al menos uno o *0* para cancelar.');
-      }
-      this.states.set(chatId, {
-        step: 'scheduleTime',
-        draft,
-        mode: 'weekly',
-        weekdays,
-      });
-      return this.reply(chatId, 'Ingresá la hora (HH:MM), por ejemplo 09:00:');
-    }
-    if (command === '0') {
+    if (body.trim() === '0') {
       return this.cancelSchedule(chatId);
     }
-
-    const parsed = this.parseWeekdays(body);
-    if (parsed.invalid.length > 0 && parsed.valid.length === 0) {
-      return this.reply(chatId, `No reconocí: ${parsed.invalid.join(', ')}. Probá de nuevo.`);
+    const parsed = this.parseDate(body);
+    if (!parsed) {
+      return this.reply(
+        chatId,
+        'Fecha inválida. Usá el formato DD/MM o DD/MM/AAAA (por ejemplo 25/12 o 25/12/2026).',
+      );
     }
-    const merged = [...new Set([...weekdays, ...parsed.valid])].sort((a, b) => a - b);
-    this.states.set(chatId, { step: 'scheduleWeekdays', draft, weekdays: merged });
-    const selected = merged.map((d) => WEEKDAY_NAMES[d]).join(', ');
-    const warn =
-      parsed.invalid.length > 0 ? `\nNo reconocí: ${parsed.invalid.join(', ')}.` : '';
-    return this.reply(
-      chatId,
-      `Días: ${selected}.${warn}\nMandá más días o *listo* para continuar.`,
-    );
+    if (parsed.year !== null && parsed.year < new Date().getFullYear()) {
+      return this.reply(
+        chatId,
+        'Ese año ya pasó. Ingresá una fecha futura con el formato DD/MM o DD/MM/AAAA.',
+      );
+    }
+    this.states.set(chatId, {
+      step: 'scheduleTime',
+      draft,
+      dateInput: { source: 'explicit', day: parsed.day, month: parsed.month, year: parsed.year },
+    });
+    return this.reply(chatId, 'Ingresá la hora (HH:MM), por ejemplo 09:00:');
   }
 
   private async handleScheduleTime(
     chatId: string,
     body: string,
     draft: ScheduleDraft,
-    mode: 'once' | 'weekly',
-    weekdays: number[],
+    dateInput: ScheduleDateInput,
   ): Promise<void> {
     const time = this.parseTime(body);
     if (!time) {
       return this.reply(chatId, 'Hora inválida. Usá el formato HH:MM (00:00 a 23:59).');
     }
 
-    let schedule: Schedule;
-    if (mode === 'once') {
-      const now = new Date();
-      const date = new Date(now);
+    let date: Date;
+    if (dateInput.source === 'today') {
+      date = new Date();
       date.setHours(time.hours, time.minutes, 0, 0);
-      if (date.getTime() <= now.getTime()) {
-        return this.reply(
-          chatId,
-          'Esa hora ya pasó hoy. Ingresá una hora posterior a la actual (HH:MM).',
-        );
-      }
-      schedule = { kind: 'once', date };
     } else {
-      schedule = { kind: 'weekly', weekdays, time: this.formatTime(time) };
+      const now = new Date();
+      const year = dateInput.year ?? now.getFullYear();
+      date = new Date(year, dateInput.month - 1, dateInput.day, time.hours, time.minutes, 0, 0);
+      if (dateInput.year === null && date.getTime() <= now.getTime()) {
+        date = new Date(year + 1, dateInput.month - 1, dateInput.day, time.hours, time.minutes, 0, 0);
+      }
+    }
+
+    this.states.set(chatId, { step: 'scheduleRepeat', draft, date, dateInput });
+    return this.reply(
+      chatId,
+      '¿Repetir el envío?\n1. Una sola vez\n2. Cada semana (este día)\n0. Cancelar',
+    );
+  }
+
+  private async handleScheduleRepeat(
+    chatId: string,
+    body: string,
+    draft: ScheduleDraft,
+    date: Date,
+    dateInput: ScheduleDateInput,
+  ): Promise<void> {
+    let schedule: Schedule;
+    switch (body) {
+      case '1': {
+        if (date.getTime() <= Date.now()) {
+          this.states.set(chatId, { step: 'scheduleTime', draft, dateInput });
+          return this.reply(
+            chatId,
+            'Esa fecha y hora ya pasaron. Ingresá una hora posterior (HH:MM).',
+          );
+        }
+        schedule = { kind: 'once', date };
+        break;
+      }
+      case '2': {
+        const time = this.formatTime({ hours: date.getHours(), minutes: date.getMinutes() });
+        schedule = { kind: 'weekly', weekdays: [date.getDay()], time };
+        break;
+      }
+      case '0':
+        return this.cancelSchedule(chatId);
+      default:
+        return this.reply(chatId, 'Opción inválida. 1=Una sola vez, 2=Cada semana, 0=Cancelar.');
     }
 
     const nextDraft: ScheduleDraft = { ...draft, schedule };
@@ -566,27 +871,17 @@ export class MenuService {
     await this.whatsapp.sendPublicationToChat(chatId, publication);
   }
 
-  private parseWeekdays(body: string): { valid: number[]; invalid: string[] } {
-    const valid: number[] = [];
-    const invalid: string[] = [];
-    const entries = body
-      .split(',')
-      .map((entry) => entry.trim().toLowerCase())
-      .filter((entry) => entry.length > 0);
-    for (const entry of entries) {
-      const asNumber = Number(entry);
-      if (Number.isInteger(asNumber) && asNumber >= 0 && asNumber <= 6) {
-        valid.push(asNumber);
-        continue;
-      }
-      const index = WEEKDAY_NAMES.indexOf(entry);
-      if (index !== -1) {
-        valid.push(index);
-        continue;
-      }
-      invalid.push(entry);
-    }
-    return { valid, invalid };
+  private parseDate(body: string): { day: number; month: number; year: number | null } | null {
+    const match = body.trim().match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{4}))?$/);
+    if (!match) return null;
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = match[3] !== undefined ? Number(match[3]) : null;
+    if (month < 1 || month > 12) return null;
+    const resolvedYear = year ?? new Date().getFullYear();
+    const daysInMonth = new Date(resolvedYear, month, 0).getDate();
+    if (day < 1 || day > daysInMonth) return null;
+    return { day, month, year };
   }
 
   private parseTime(body: string): { hours: number; minutes: number } | null {
@@ -608,7 +903,18 @@ export class MenuService {
     if (schedule.kind === 'once') {
       const hh = String(schedule.date.getHours()).padStart(2, '0');
       const mm = String(schedule.date.getMinutes()).padStart(2, '0');
-      return `hoy a las ${hh}:${mm}`;
+      const now = new Date();
+      const sameDay =
+        schedule.date.getFullYear() === now.getFullYear() &&
+        schedule.date.getMonth() === now.getMonth() &&
+        schedule.date.getDate() === now.getDate();
+      if (sameDay) {
+        return `hoy a las ${hh}:${mm}`;
+      }
+      const dd = String(schedule.date.getDate()).padStart(2, '0');
+      const mo = String(schedule.date.getMonth() + 1).padStart(2, '0');
+      const yyyy = schedule.date.getFullYear();
+      return `el ${dd}/${mo}/${yyyy} a las ${hh}:${mm}`;
     }
     const days = schedule.weekdays.map((d) => WEEKDAY_NAMES[d]).join(', ');
     return `${days} a las ${schedule.time}`;
@@ -627,7 +933,14 @@ export class MenuService {
   }
 
   private audiencesMenu(): string {
-    return '*👥 Grupos de remitentes*\n1. Crear\n2. Listar\n0. Volver';
+    return '*👥 Grupos de remitentes*\n1. Crear\n2. Listar\n3. Editar/Eliminar\n0. Volver';
+  }
+
+  private audienceEditMenu(audience: Audience): string {
+    return (
+      `Editando *${audience.name}* (${audience.recipients.length} destinatario/s).\n` +
+      '1. Agregar/quitar destinatarios\n2. Renombrar\n3. Eliminar grupo\n0. Volver'
+    );
   }
 
   private publicationsMenu(): string {
@@ -653,6 +966,10 @@ export class MenuService {
       .listAudiences()
       .map((a, i) => `${i + 1}. ${a.name} (${a.recipients.length})`)
       .join('\n');
+  }
+
+  private numberedRecipients(audience: Audience): string {
+    return audience.recipients.map((r, i) => `${i + 1}. ${r}`).join('\n');
   }
 
   private numberedPublications(): string {

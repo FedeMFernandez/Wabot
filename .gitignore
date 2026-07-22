@@ -1,3 +1,7 @@
+# Secrets / keys
+*.pem
+SSH.pem
+
 # Logs
 logs
 *.log

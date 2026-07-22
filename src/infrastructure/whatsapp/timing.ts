@@ -1,0 +1,8 @@
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function randomBetween(min: number, max: number): number {
+  if (max <= min) return min;
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
