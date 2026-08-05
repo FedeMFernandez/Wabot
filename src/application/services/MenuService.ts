@@ -10,9 +10,38 @@ import {
   validatePhoneNumber,
   validateRecipients,
 } from '../../domain';
+import { logInfo } from '../../infrastructure/logging/logger';
 import type { WhatsAppService } from './WhatsAppService';
 
 const VCARD_TYPES = ['vcard', 'multi_vcard'];
+const VCARD_MARKER = /BEGIN:VCARD/i;
+
+type RawVCardEntry = string | { vcard?: unknown };
+
+function collectVCards(message: Message): string[] {
+  const found: string[] = [];
+
+  const exposed = message.vCards;
+  if (Array.isArray(exposed)) {
+    for (const entry of exposed) {
+      if (typeof entry === 'string' && VCARD_MARKER.test(entry)) found.push(entry);
+    }
+  }
+
+  const raw = (message as unknown as { _data?: { vcardList?: RawVCardEntry[]; body?: unknown } })._data;
+  if (Array.isArray(raw?.vcardList)) {
+    for (const entry of raw.vcardList) {
+      const value = typeof entry === 'string' ? entry : entry?.vcard;
+      if (typeof value === 'string' && VCARD_MARKER.test(value)) found.push(value);
+    }
+  }
+
+  for (const candidate of [message.body, raw?.body]) {
+    if (typeof candidate === 'string' && VCARD_MARKER.test(candidate)) found.push(candidate);
+  }
+
+  return found;
+}
 
 const WEEKDAY_NAMES = [
   'domingo',
@@ -304,8 +333,18 @@ export class MenuService {
       return this.reply(chatId, `Grupo de remitentes no encontrado.\n\n${this.audiencesMenu()}`);
     }
 
-    if (VCARD_TYPES.includes(message.type)) {
-      return this.addRecipientsFromVCards(chatId, audience, message.vCards ?? []);
+    const sharedVCards = collectVCards(message);
+    if (sharedVCards.length > 0 || VCARD_TYPES.includes(message.type)) {
+      logInfo(`📇 Contactos compartidos: type=${message.type} vcards=${sharedVCards.length}`);
+      return this.addRecipientsFromVCards(chatId, audience, sharedVCards);
+    }
+
+    if (message.type !== 'chat') {
+      logInfo(`📇 Mensaje no soportado en destinatarios: type=${message.type} body=${message.body}`);
+      return this.reply(
+        chatId,
+        'No pude leer ese mensaje como contactos. Probá compartir los contactos de a tandas más chicas (hasta 20 por vez) o mandá los números separados por coma.',
+      );
     }
 
     const body = message.body.trim();
